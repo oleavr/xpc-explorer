@@ -1,12 +1,12 @@
 {
-  "name": "frida-tool-example",
+  "name": "xpc-explorer",
   "version": "1.0.0",
-  "description": "Frida CLI tool example",
+  "description": "XPC Explorer",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/oleavr/frida-tool-example.git"
+    "url": "https://github.com/oleavr/xpc-explorer.git"
   },
   "engines": {
     "node": ">= 16"
@@ -15,7 +15,7 @@
     "/dist/"
   ],
   "bin": {
-    "frida-tool-example": "./dist/bin/frida-tool-example.js"
+    "xpc-explorer": "./dist/bin/xpc-explorer.js"
   },
   "scripts": {
     "prepare": "npm run app:build && npm --prefix ./lib/agent install ./lib/agent",

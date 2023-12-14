@@ -1,7 +1,7 @@
 {
-  "name": "frida-agent-example",
+  "name": "xpc-explorer-agent",
   "version": "1.0.0",
-  "description": "Frida agent example",
+  "description": "XPC Explorer Agent",
   "private": true,
   "main": "index.ts",
   "scripts": {
