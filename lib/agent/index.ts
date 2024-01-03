@@ -81,6 +81,33 @@ class Agent implements AgentApi {
     }
 }
 
+const resolver = new ApiResolver("module");
+resolver.enumerateMatches("exports:*!*xpc_connection_create*")
+    .forEach(({ name, address }) => {
+        Interceptor.attach(address, {
+            onEnter(args) {
+                const details = parseXpcConnectionCreateArgs(name, args);
+                console.log(`[depth=${this.depth}] ${name}() ${JSON.stringify(details)}`);
+            }
+        });
+    });
+
+function parseXpcConnectionCreateArgs(name: string, args: InvocationArguments) {
+    if (name.endsWith("!xpc_connection_create")) {
+        return {
+            name: args[0].readUtf8String(),
+        };
+    }
+
+    if (name.endsWith("!xpc_connection_create_mach_service")) {
+        return {
+            name: args[0].readUtf8String(),
+        };
+    }
+
+    return {};
+}
+
 Interceptor.attach(DebugSymbol.getFunctionByName("_xpc_connection_call_event_handler"), function (args) {
     const connection = args[0];
     const event = parseXpcObject(args[1]);
