@@ -13,6 +13,7 @@ const xpcDataGetBytesPtr = new NativeFunction(Module.getExportByName(LIBXPC, "xp
 const xpcDataGetLength = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_data_get_length"), "size_t", ["pointer"], nfOpts);
 const xpcDictionaryApply = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_dictionary_apply"), "bool", ["pointer", "pointer"], nfOpts);
 const xpcDictionaryGetString = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_dictionary_get_string"), "pointer", ["pointer", "pointer"], nfOpts);
+const xpcDoubleGetValue = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_double_get_value"), "double", ["pointer"], nfOpts);
 const xpcFdDup = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_fd_dup"), "int", ["pointer"], nfOpts);
 const xpcGetType = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_get_type"), "pointer", ["pointer"], nfOpts);
 const xpcInt64GetValue = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_int64_get_value"), "int64", ["pointer"], nfOpts);
@@ -109,6 +110,7 @@ function registerXpcParsers() {
     registerXpcParser("bool", parseXpcBool);
     registerXpcParser("int64", parseXpcInt64);
     registerXpcParser("uint64", parseXpcUint64);
+    registerXpcParser("double", parseXpcDouble);
     registerXpcParser("data", parseXpcData);
     registerXpcParser("string", parseXpcString);
     registerXpcParser("uuid", parseXpcUuid);
@@ -134,6 +136,10 @@ function parseXpcInt64(obj: NativePointer): number {
 
 function parseXpcUint64(obj: NativePointer): number {
     return xpcUInt64GetValue(obj).valueOf();
+}
+
+function parseXpcDouble(obj: NativePointer): number {
+    return xpcDoubleGetValue(obj).valueOf();
 }
 
 function parseXpcData(obj: NativePointer): XpcData {
