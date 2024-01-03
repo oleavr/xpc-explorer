@@ -11,6 +11,7 @@ const xpcBoolGetValue = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_b
 const xpcConnectionGetPid = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_connection_get_pid"), "uint", ["pointer"]);
 const xpcDataGetBytesPtr = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_data_get_bytes_ptr"), "pointer", ["pointer"], nfOpts);
 const xpcDataGetLength = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_data_get_length"), "size_t", ["pointer"], nfOpts);
+const xpcDateGetValue = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_date_get_value"), "int64", ["pointer"], nfOpts);
 const xpcDictionaryApply = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_dictionary_apply"), "bool", ["pointer", "pointer"], nfOpts);
 const xpcDictionaryGetString = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_dictionary_get_string"), "pointer", ["pointer", "pointer"], nfOpts);
 const xpcDoubleGetValue = new NativeFunction(Module.getExportByName(LIBXPC, "xpc_double_get_value"), "double", ["pointer"], nfOpts);
@@ -31,6 +32,7 @@ type XpcObjectParser = (obj: NativePointer) => XpcValue;
 type XpcValue =
     | boolean
     | number
+    | Date
     | XpcData
     | string
     | XpcFd
@@ -111,6 +113,7 @@ function registerXpcParsers() {
     registerXpcParser("int64", parseXpcInt64);
     registerXpcParser("uint64", parseXpcUint64);
     registerXpcParser("double", parseXpcDouble);
+    registerXpcParser("date", parseXpcDate);
     registerXpcParser("data", parseXpcData);
     registerXpcParser("string", parseXpcString);
     registerXpcParser("uuid", parseXpcUuid);
@@ -140,6 +143,10 @@ function parseXpcUint64(obj: NativePointer): number {
 
 function parseXpcDouble(obj: NativePointer): number {
     return xpcDoubleGetValue(obj).valueOf();
+}
+
+function parseXpcDate(obj: NativePointer): Date {
+    return new Date(xpcDateGetValue(obj).valueOf() * 1000);
 }
 
 function parseXpcData(obj: NativePointer): XpcData {
