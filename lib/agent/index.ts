@@ -102,8 +102,10 @@ resolver.enumerateMatches("exports:*!*xpc_connection_create*")
     .forEach(({ name, address }) => {
         Interceptor.attach(address, {
             onEnter(args) {
-                const details = parseXpcConnectionCreateArgs(name, args);
-                console.log(`[depth=${this.depth}] ${name}() ${JSON.stringify(details)}`);
+                this.details = parseXpcConnectionCreateArgs(name, args);
+            },
+            onLeave(retval) {
+                logConnectionEvent(retval, name, this.details, this);
             }
         });
     });
@@ -131,7 +133,7 @@ Interceptor.attach(DebugSymbol.getFunctionByName("_xpc_connection_call_event_han
 
         const event = parseXpcObject(args[1]);
 
-        console.log(`<<< [${connection}] ${JSON.stringify(event)}`);
+        logConnectionEvent(connection, "<<<", event, this);
 
         if (!tracingEnabled) {
             return;
@@ -243,9 +245,17 @@ function parseCalls(events: ArrayBuffer): CallEntry[] {
     Interceptor.attach(Module.getExportByName(LIBXPC, name), function (args) {
         const connection = args[0];
         const message = parseXpcObject(args[1]);
-        console.log(`>>> [${connection}] ${JSON.stringify(message)}`);
+        logConnectionEvent(connection, ">>>", message, this);
     });
 });
+
+function logConnectionEvent(connection: NativePointer, prefix: string, event: XpcValue, ic: InvocationContext) {
+    const indent = [];
+    for (let i = ic.depth; i !== 0; i--) {
+        indent.push("\t");
+    }
+    console.log(`${indent}${prefix} [${connection} PID=${xpcConnectionGetPid(connection)}] ${JSON.stringify(event)}`);
+}
 
 function parseXpcObject(obj: NativePointer): XpcValue {
     const type = xpcGetType(obj);
