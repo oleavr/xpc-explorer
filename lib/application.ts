@@ -8,7 +8,15 @@ import {
 } from "./config.js";
 import { Operation, AsyncOperation } from "./operation.js";
 
-import { QWidget, QListWidget, QListWidgetItem, QMainWindow, FlexLayout, QLabel } from "@nodegui/nodegui";
+import {
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QSplitter,
+    QGroupBox,
+    QBoxLayout,
+    QTextEdit
+} from "@nodegui/nodegui";
 import { EventEmitter } from "events";
 import * as frida from "frida";
 import {
@@ -31,26 +39,9 @@ import { promisify } from "util";
 const readFile = promisify(fs.readFile);
 
 const rootStyleSheet = `
-* {
-  font-size: 20px;
-  color: white;
+#rootSplitter {
+    padding: 5px;
 }
-
-#rootView {
-  flex: 1;
-  flex-direction: 'row';
-}
-
-#dataView,#configView {
-  flex: 1;
-  justify-content: space-between;
-  flex-direction: 'column';
-}
-
-#dataView * {
-  background: #1E1E1E;
-}
-
 `;
 
 export class Application {
@@ -63,61 +54,53 @@ export class Application {
     #scheduler: OperationScheduler;
 
     #window = new QMainWindow();
-    #rootView = new QWidget();
-    #dataView = new QWidget();
-    #configView = new QWidget();
     #handlerView = new QListWidget();
     #eventView = new QListWidget();
-    #traceView = new QListWidget();
-    #handlers = new Set<string>();
+    #dataView = new QTextEdit();
 
-    
+    #handlers: XpcHandler[] = [];
+
     constructor(config: Config, delegate: Delegate) {
         this.#config = config;
         this.#delegate = delegate;
 
         this.#scheduler = new OperationScheduler("application", delegate);
 
-        const rootViewLayout = new FlexLayout();
-        rootViewLayout.setObjectName("rootView");
-        this.#rootView.setLayout(rootViewLayout);
-        this.#rootView.setStyleSheet(rootStyleSheet);
+        const rootSplitter = new QSplitter();
+        rootSplitter.setObjectName("rootSplitter");
 
-        const dataViewLayout = new FlexLayout();
-        dataViewLayout.setObjectName("dataView");
-        this.#dataView.setLayout(dataViewLayout);
-        const dataLabel = new QLabel();
-        dataLabel.setText("Event Ouput");
-        dataViewLayout.addWidget(dataLabel);
+        const handlerGroup = new QGroupBox();
+        handlerGroup.setObjectName("handler-group");
+        handlerGroup.setTitle("Handlers");
+        rootSplitter.addWidget(handlerGroup);
 
-        const configViewLayout = new FlexLayout();
-        configViewLayout.setObjectName("configView");
-        this.#configView.setLayout(configViewLayout);
-        const configLabel = new QLabel();
-        configLabel.setText("Configuration");
-        configViewLayout.addWidget(configLabel);
+        const handlerLayout = new QBoxLayout(2);
+        handlerLayout.addWidget(this.#handlerView);
+        handlerGroup.setLayout(handlerLayout);
 
-        const handlerViewLayout = new FlexLayout();
-        handlerViewLayout.setObjectName("handlerView");
-        this.#handlerView.setLayout(handlerViewLayout);
+        this.#handlerView.addEventListener("currentRowChanged", this.#onHandlerViewCurrentRowChanged);
 
-        const eventViewLayout = new FlexLayout();
-        eventViewLayout.setObjectName("eventView");
-        this.#eventView.setLayout(eventViewLayout);
+        const eventGroup = new QGroupBox();
+        eventGroup.setTitle("Events");
+        rootSplitter.addWidget(eventGroup);
 
-        const traceViewLayout = new FlexLayout();
-        traceViewLayout.setObjectName("traceView");
-        this.#traceView.setLayout(traceViewLayout);
+        const eventLayout = new QBoxLayout(2);
+        eventLayout.addWidget(this.#eventView);
+        eventGroup.setLayout(eventLayout);
 
-        rootViewLayout.addWidget(this.#dataView);
-        rootViewLayout.addWidget(this.#configView);
-        dataViewLayout.addWidget(this.#handlerView);
-        dataViewLayout.addWidget(this.#eventView);
-        dataViewLayout.addWidget(this.#traceView);
+        this.#eventView.setSelectionMode(2);
 
+        const dataGroup = new QGroupBox();
+        dataGroup.setTitle("Data");
+        rootSplitter.addWidget(dataGroup);
+
+        const dataLayout = new QBoxLayout(2);
+        dataLayout.addWidget(this.#dataView);
+        dataGroup.setLayout(dataLayout);
 
         this.#window.setWindowTitle("xpc-explorer");
-        this.#window.setCentralWidget(this.#rootView);
+        this.#window.setStyleSheet(rootStyleSheet);
+        this.#window.setCentralWidget(rootSplitter);
         this.#window.show();
     }
 
@@ -182,17 +165,39 @@ export class Application {
         });
     }
 
-    async onTrace({ handler }: TraceDetails, data: ArrayBuffer, agent: AgentApi) {
-        if (this.#handlers.has(handler)) {
-            return;
+    async onTrace({ handler: handlerId, event }: TraceDetails, data: ArrayBuffer, agent: AgentApi) {
+        let handler: XpcHandler;
+        let handlerSeenBefore = true;
+        let index = this.#handlers.findIndex(h => h.id === handlerId);
+        if (index !== -1) {
+            handler = this.#handlers[index];
+        } else {
+            handlerSeenBefore = false;
+
+            handler = {
+                id: handlerId,
+                name: null,
+                events: [],
+            };
+            index = this.#handlers.length;
+            this.#handlers.push(handler);
         }
-        this.#handlers.add(handler);
 
-        const [ name ] = await agent.symbolicate([ handler ]);
+        handler.events.push(event);
 
-        const item = new QListWidgetItem();
-        item.setText(name);
-        this.#handlerView.addItem(item);
+        if (this.#handlerView.currentRow() === index) {
+            this.#addEventToUI(event);
+        }
+
+        if (!handlerSeenBefore) {
+            const [ name ] = await agent.symbolicate([ handlerId ]);
+            handler.name = name;
+
+            const item = new QListWidgetItem();
+            item.setText(name);
+            this.#handlerView.addItem(item);
+        }
+
         const blockEventSize = 32;
         const buffer = Buffer.from(data);
         //TODO - parse Trace info
@@ -203,6 +208,26 @@ export class Application {
         // }
         // console.log(`Trace END -----------------------`);
     }
+
+    #onHandlerViewCurrentRowChanged = (currentRow: number) => {
+        const handler = this.#handlers[currentRow];
+        this.#eventView.clear();
+        for (const ev of handler.events) {
+            this.#addEventToUI(ev);
+        }
+    };
+
+    #addEventToUI(ev: any) {
+        const item = new QListWidgetItem();
+        item.setText(JSON.stringify(ev));
+        this.#eventView.addItem(item);
+    }
+}
+
+interface XpcHandler {
+    id: string;
+    name: string | null;
+    events: any[];
 }
 
 interface TraceDetails {
