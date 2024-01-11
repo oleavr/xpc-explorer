@@ -9,12 +9,12 @@ import {
 import { Operation, AsyncOperation } from "./operation.js";
 
 import {
+    QBoxLayout,
+    QGroupBox,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QSplitter,
-    QGroupBox,
-    QBoxLayout,
     QTextEdit
 } from "@nodegui/nodegui";
 import { EventEmitter } from "events";
@@ -88,7 +88,8 @@ export class Application {
         eventLayout.addWidget(this.#eventView);
         eventGroup.setLayout(eventLayout);
 
-        this.#eventView.setSelectionMode(2);
+        //this.#eventView.setSelectionMode(2);
+        this.#eventView.addEventListener("currentRowChanged", this.#onEventViewCurrentRowChanged);
 
         const dataGroup = new QGroupBox();
         dataGroup.setTitle("Data");
@@ -97,6 +98,8 @@ export class Application {
         const dataLayout = new QBoxLayout(2);
         dataLayout.addWidget(this.#dataView);
         dataGroup.setLayout(dataLayout);
+
+        this.#dataView.setReadOnly(true);
 
         this.#window.setWindowTitle("xpc-explorer");
         this.#window.setStyleSheet(rootStyleSheet);
@@ -165,7 +168,7 @@ export class Application {
         });
     }
 
-    async onTrace({ handler: handlerId, event }: TraceDetails, data: ArrayBuffer, agent: AgentApi) {
+    async onTrace({ handler: handlerId, event }: TraceDetails, trace: Buffer, agent: AgentApi) {
         let handler: XpcHandler;
         let handlerSeenBefore = true;
         let index = this.#handlers.findIndex(h => h.id === handlerId);
@@ -177,52 +180,86 @@ export class Application {
             handler = {
                 id: handlerId,
                 name: null,
-                events: [],
+                invocations: [],
+                agent,
             };
             index = this.#handlers.length;
             this.#handlers.push(handler);
         }
 
-        handler.events.push(event);
+        const invocation: XpcHandlerInvocation = {
+            event,
+            trace,
+        };
+        handler.invocations.push(invocation);
 
         if (this.#handlerView.currentRow() === index) {
-            this.#addEventToUI(event);
+            this.#addInvocationToUI(invocation);
         }
 
         if (!handlerSeenBefore) {
+            const item = new QListWidgetItem();
+            item.setText(handlerId);
+            this.#handlerView.addItem(item);
+
             const [ name ] = await agent.symbolicate([ handlerId ]);
             handler.name = name;
-
-            const item = new QListWidgetItem();
             item.setText(name);
-            this.#handlerView.addItem(item);
         }
-
-        /*const blockEventSize = 32;
-        const buffer = Buffer.from(data);
-        for (let i = 0; i < data.byteLength; i += blockEventSize) {
-            if (buffer.readUInt32LE(i) !== 8) {
-                continue;
-            }
-            const start = `0x${buffer.readBigUInt64LE(i + 8).toString(16)}`;
-            const end = `0x${buffer.readBigUInt64LE(i + 16).toString(16)}`;
-
-            const disassembled = await agent.disassemble([{ start, end }]);
-            console.log(`-----------------------\n${disassembled}\n-----------------------`);
-        }*/
     }
 
     #onHandlerViewCurrentRowChanged = (currentRow: number) => {
         const handler = this.#handlers[currentRow];
         this.#eventView.clear();
-        for (const ev of handler.events) {
-            this.#addEventToUI(ev);
+        for (const invocation of handler.invocations) {
+            this.#addInvocationToUI(invocation);
         }
+        this.#eventView.setCurrentRow(-1);
     };
 
-    #addEventToUI(ev: any) {
+    #onEventViewCurrentRowChanged = async (currentRow: number) => {
+        this.#dataView.clear();
+
+        const handler = this.#handlers[this.#handlerView.currentRow()];
+        const invocation = handler.invocations[currentRow];
+        if (invocation === undefined) {
+            return;
+        }
+
+        const lines: string[] = [];
+        const eventSize = 32;
+        const { trace } = invocation;
+        const size = trace.length;
+        const { agent } = handler;
+        const started = Date.now();
+        for (let offset = 0; offset < size; offset += eventSize) {
+            const type = trace.readUInt32LE(offset);
+            if (type !== 8) {
+                continue;
+            }
+
+            if (lines.length !== 0) {
+                lines.push(`-----------------------`);
+            }
+
+            const start = `0x${trace.readBigUInt64LE(offset + 8).toString(16)}`;
+            const end = `0x${trace.readBigUInt64LE(offset + 16).toString(16)}`;
+
+            const disassembled = await agent.disassemble([{ start, end }]);
+            lines.push(...disassembled);
+
+            if (Date.now() - started >= 50) {
+                const numEventsOmitted = ((size - offset) / eventSize) + 1;
+                lines.push(`\n(...and ${numEventsOmitted} more events...)`);
+                break;
+            }
+        }
+        this.#dataView.setText(lines.join("\n"));
+    };
+
+    #addInvocationToUI(invocation: XpcHandlerInvocation) {
         const item = new QListWidgetItem();
-        item.setText(JSON.stringify(ev));
+        item.setText(JSON.stringify(invocation.event));
         this.#eventView.addItem(item);
     }
 }
@@ -230,7 +267,13 @@ export class Application {
 interface XpcHandler {
     id: string;
     name: string | null;
-    events: any[];
+    invocations: XpcHandlerInvocation[];
+    agent: AgentApi;
+}
+
+interface XpcHandlerInvocation {
+    event: any;
+    trace: Buffer;
 }
 
 interface TraceDetails {
