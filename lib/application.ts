@@ -39,7 +39,7 @@ import { promisify } from "util";
 const readFile = promisify(fs.readFile);
 
 const rootStyleSheet = `
-#rootSplitter {
+#rootGroup {
     padding: 5px;
 }
 `;
@@ -56,6 +56,7 @@ export class Application {
     #window = new QMainWindow();
     #handlerView = new QListWidget();
     #eventView = new QListWidget();
+    #eventDetailsView = new QTextEdit();
     #dataView = new QTextEdit();
 
     #handlers: XpcHandler[] = [];
@@ -66,13 +67,25 @@ export class Application {
 
         this.#scheduler = new OperationScheduler("application", delegate);
 
-        const rootSplitter = new QSplitter();
-        rootSplitter.setObjectName("rootSplitter");
+        const rootGroup = new QGroupBox();
+        const rootLayout = new QBoxLayout(2);
+        rootGroup.setObjectName("rootGroup");
+        rootGroup.setLayout(rootLayout);
+
+        const dataSplitter = new QSplitter();
+        dataSplitter.setObjectName("dataSplitter");
+
+        const disassGroup = new QGroupBox();
+        dataSplitter.setObjectName("disass-group");
+        disassGroup.setTitle("Disassembly");
+
+        rootLayout.addWidget(dataSplitter);
+        rootLayout.addWidget(disassGroup);
 
         const handlerGroup = new QGroupBox();
         handlerGroup.setObjectName("handler-group");
         handlerGroup.setTitle("Handlers");
-        rootSplitter.addWidget(handlerGroup);
+        dataSplitter.addWidget(handlerGroup);
 
         const handlerLayout = new QBoxLayout(2);
         handlerLayout.addWidget(this.#handlerView);
@@ -82,28 +95,29 @@ export class Application {
 
         const eventGroup = new QGroupBox();
         eventGroup.setTitle("Events");
-        rootSplitter.addWidget(eventGroup);
+        dataSplitter.addWidget(eventGroup);
 
         const eventLayout = new QBoxLayout(2);
         eventLayout.addWidget(this.#eventView);
+        eventLayout.addWidget(this.#eventDetailsView);
         eventGroup.setLayout(eventLayout);
 
         //this.#eventView.setSelectionMode(2);
         this.#eventView.addEventListener("currentRowChanged", this.#onEventViewCurrentRowChanged);
 
-        const dataGroup = new QGroupBox();
-        dataGroup.setTitle("Data");
-        rootSplitter.addWidget(dataGroup);
+        const execGroup = new QGroupBox();
+        execGroup.setTitle("Execution Tree");
+        dataSplitter.addWidget(execGroup);
 
         const dataLayout = new QBoxLayout(2);
         dataLayout.addWidget(this.#dataView);
-        dataGroup.setLayout(dataLayout);
+        execGroup.setLayout(dataLayout);
 
         this.#dataView.setReadOnly(true);
 
         this.#window.setWindowTitle("xpc-explorer");
         this.#window.setStyleSheet(rootStyleSheet);
-        this.#window.setCentralWidget(rootSplitter);
+        this.#window.setCentralWidget(rootGroup);
         this.#window.show();
     }
 
@@ -228,7 +242,7 @@ export class Application {
 
         const lines: string[] = [];
         const eventSize = 32;
-        const { trace } = invocation;
+        const { trace, event } = invocation;
         const size = trace.length;
         const { agent } = handler;
         const started = Date.now();
@@ -255,6 +269,7 @@ export class Application {
             }
         }
         this.#dataView.setText(lines.join("\n"));
+        this.#eventDetailsView.setText(JSON.stringify(event, null, 2));
     };
 
     #addInvocationToUI(invocation: XpcHandlerInvocation) {
