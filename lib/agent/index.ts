@@ -341,19 +341,40 @@ function hexify(data: ArrayBuffer): string {
 function disassembleBlock(start: NativePointer, end: NativePointer): string {
     const lines: string[] = [];
 
+    const isArm64 = Process.arch === "arm64";
+
     let cursor = start;
+    let lastAdrpValue = NULL;
+    let lastAdrpReg: Arm64Register | null = null;
     while (cursor.compare(end) < 0) {
         try {
             const insn = Instruction.parse(cursor) as Arm64Instruction | X86Instruction;
             let comments: string[] = [];
 
-            for (const op of insn.operands) {
-                if (op.type === "imm") {
-                    const target = ptr(op.value.toString());
+            if (insn.mnemonic === "adrp") {
+                lastAdrpValue = ptr(insn.operands[1].value.toString());
+                lastAdrpReg = insn.operands[0].value as Arm64Register;
+            } else if (insn.mnemonic === "add") {
+                if (!lastAdrpValue.isNull() &&
+                        insn.operands[0].type === "reg" &&
+                        insn.operands[0].value === lastAdrpReg) {
+                    const target = lastAdrpValue.add(ptr(insn.operands[2].value.toString()));
                     const sym = DebugSymbol.fromAddress(target).name;
-
+                    lastAdrpValue = NULL;
+    
                     if (sym !== null) {
                         comments.push(sym);
+                    }
+                }
+            } else {
+                for (const op of insn.operands) {
+                    if (op.type === "imm") {
+                        const target = ptr(op.value.toString());
+                        const sym = DebugSymbol.fromAddress(target).name;
+    
+                        if (sym !== null) {
+                            comments.push(sym);
+                        }
                     }
                 }
             }
@@ -362,7 +383,7 @@ function disassembleBlock(start: NativePointer, end: NativePointer): string {
 
             cursor = cursor.add(insn.size);
         } catch (e) {
-            if (Process.arch !== "arm64") {
+            if (!isArm64) {
                 break;
             }
             lines.push(`${cursor}    invalid`);
