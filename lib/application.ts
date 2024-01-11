@@ -8,7 +8,7 @@ import {
 } from "./config.js";
 import { Operation, AsyncOperation } from "./operation.js";
 
-import { QListWidget, QListWidgetItem, QMainWindow } from "@nodegui/nodegui";
+import { QWidget, QListWidget, QListWidgetItem, QMainWindow, FlexLayout, QLabel } from "@nodegui/nodegui";
 import { EventEmitter } from "events";
 import * as frida from "frida";
 import {
@@ -30,6 +30,29 @@ import { promisify } from "util";
 
 const readFile = promisify(fs.readFile);
 
+const rootStyleSheet = `
+* {
+  font-size: 20px;
+  color: white;
+}
+
+#rootView {
+  flex: 1;
+  flex-direction: 'row';
+}
+
+#dataView,#configView {
+  flex: 1;
+  justify-content: space-between;
+  flex-direction: 'column';
+}
+
+#dataView * {
+  background: #1E1E1E;
+}
+
+`;
+
 export class Application {
     #config: Config;
     #delegate: Delegate;
@@ -40,18 +63,61 @@ export class Application {
     #scheduler: OperationScheduler;
 
     #window = new QMainWindow();
+    #rootView = new QWidget();
+    #dataView = new QWidget();
+    #configView = new QWidget();
     #handlerView = new QListWidget();
+    #eventView = new QListWidget();
+    #traceView = new QListWidget();
     #handlers = new Set<string>();
 
+    
     constructor(config: Config, delegate: Delegate) {
         this.#config = config;
         this.#delegate = delegate;
 
         this.#scheduler = new OperationScheduler("application", delegate);
 
-        this.#window.setWindowTitle("xpc-explorer");
-        this.#window.setCentralWidget(this.#handlerView);
+        const rootViewLayout = new FlexLayout();
+        rootViewLayout.setObjectName("rootView");
+        this.#rootView.setLayout(rootViewLayout);
+        this.#rootView.setStyleSheet(rootStyleSheet);
 
+        const dataViewLayout = new FlexLayout();
+        dataViewLayout.setObjectName("dataView");
+        this.#dataView.setLayout(dataViewLayout);
+        const dataLabel = new QLabel();
+        dataLabel.setText("Event Ouput");
+        dataViewLayout.addWidget(dataLabel);
+
+        const configViewLayout = new FlexLayout();
+        configViewLayout.setObjectName("configView");
+        this.#configView.setLayout(configViewLayout);
+        const configLabel = new QLabel();
+        configLabel.setText("Configuration");
+        configViewLayout.addWidget(configLabel);
+
+        const handlerViewLayout = new FlexLayout();
+        handlerViewLayout.setObjectName("handlerView");
+        this.#handlerView.setLayout(handlerViewLayout);
+
+        const eventViewLayout = new FlexLayout();
+        eventViewLayout.setObjectName("eventView");
+        this.#eventView.setLayout(eventViewLayout);
+
+        const traceViewLayout = new FlexLayout();
+        traceViewLayout.setObjectName("traceView");
+        this.#traceView.setLayout(traceViewLayout);
+
+        rootViewLayout.addWidget(this.#dataView);
+        rootViewLayout.addWidget(this.#configView);
+        dataViewLayout.addWidget(this.#handlerView);
+        dataViewLayout.addWidget(this.#eventView);
+        dataViewLayout.addWidget(this.#traceView);
+
+
+        this.#window.setWindowTitle("xpc-explorer");
+        this.#window.setCentralWidget(this.#rootView);
         this.#window.show();
     }
 
@@ -127,6 +193,15 @@ export class Application {
         const item = new QListWidgetItem();
         item.setText(name);
         this.#handlerView.addItem(item);
+        const blockEventSize = 32;
+        const buffer = Buffer.from(data);
+        //TODO - parse Trace info
+        // for (let i = 0; i < data.byteLength; i+=blockEventSize) {
+        //     console.log(`Trace Type: ${buffer.readUInt32LE(i)}`);
+        //     console.log(`Start: 0x${buffer.readBigUInt64LE(i + 8).toString(16)}`);
+        //     console.log(`End: 0x${buffer.readBigUInt64LE(i + 16).toString(16)}`);
+        // }
+        // console.log(`Trace END -----------------------`);
     }
 }
 
