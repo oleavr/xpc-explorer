@@ -198,15 +198,18 @@ export class Application {
             this.#handlerView.addItem(item);
         }
 
-        const blockEventSize = 32;
+        /*const blockEventSize = 32;
         const buffer = Buffer.from(data);
-        //TODO - parse Trace info
-        // for (let i = 0; i < data.byteLength; i+=blockEventSize) {
-        //     console.log(`Trace Type: ${buffer.readUInt32LE(i)}`);
-        //     console.log(`Start: 0x${buffer.readBigUInt64LE(i + 8).toString(16)}`);
-        //     console.log(`End: 0x${buffer.readBigUInt64LE(i + 16).toString(16)}`);
-        // }
-        // console.log(`Trace END -----------------------`);
+        for (let i = 0; i < data.byteLength; i += blockEventSize) {
+            if (buffer.readUInt32LE(i) !== 8) {
+                continue;
+            }
+            const start = `0x${buffer.readBigUInt64LE(i + 8).toString(16)}`;
+            const end = `0x${buffer.readBigUInt64LE(i + 16).toString(16)}`;
+
+            const disassembled = await agent.disassemble([{ start, end }]);
+            console.log(`-----------------------\n${disassembled}\n-----------------------`);
+        }*/
     }
 
     #onHandlerViewCurrentRowChanged = (currentRow: number) => {
