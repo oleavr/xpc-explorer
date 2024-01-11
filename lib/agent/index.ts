@@ -1,5 +1,7 @@
 import { AgentApi } from "./interfaces.js";
 
+import { Buffer } from "buffer";
+
 const LIBSYSTEM_KERNEL = "/usr/lib/system/libsystem_kernel.dylib";
 const LIBXPC = "/usr/lib/system/libxpc.dylib";
 
@@ -69,15 +71,20 @@ interface XpcEndpointDetails {
     port: number;
 }
 
-const tracingEnabled = false;
+Stalker.trustThreshold = 0;
+Stalker.queueDrainInterval = 0;
+Stalker.queueCapacity = 1024 * 1024;
 
 const xpcParsers = new Map<string, XpcObjectParser>();
 
 registerXpcParsers();
 
 class Agent implements AgentApi {
-    public async init(): Promise<void> {
-        Stalker.exclude(Process.getModuleByName("libswiftCore.dylib"));
+    async init(): Promise<void> {
+    }
+
+    async symbolicate(addresses: string[]): Promise<string[]> {
+        return addresses.map(addr => DebugSymbol.fromAddress(ptr(addr)).toString());
     }
 }
 
@@ -105,7 +112,7 @@ resolver.enumerateMatches("exports:*!*xpc_connection_create*")
                 this.details = parseXpcConnectionCreateArgs(name, args);
             },
             onLeave(retval) {
-                logConnectionEvent(retval, name, this.details, this);
+                logConnectionEvent(retval, "create", this.details, this);
             }
         });
     });
@@ -129,113 +136,40 @@ function parseXpcConnectionCreateArgs(name: string, args: InvocationArguments) {
 Interceptor.attach(DebugSymbol.getFunctionByName("_xpc_connection_call_event_handler"), {
     onEnter(args) {
         const connection = args[0];
-        const handler = connection.strip().add(0x20).readPointer().strip().add(0x10).readPointer().strip();
-
         const event = parseXpcObject(args[1]);
 
-        logConnectionEvent(connection, "<<<", event, this);
+        logConnectionEvent(connection, "recv", event, this);
 
-        if (!tracingEnabled) {
-            return;
-        }
+        const traceResults: Buffer[] = [];
 
-        const handlerId = handler.toString();
-        let trace = traces.get(handlerId);
-        if (trace === undefined) {
-            trace = {
-                id: DebugSymbol.fromAddress(handler).toString(),
-                nodes: [],
-            };
-            traces.set(handlerId, trace);
-        }
-        this.trace = trace;
-
-        const nodes = trace.nodes;
+        this.connection = connection;
+        this.handler = connection.strip().add(0x20).readPointer().strip().add(0x10).readPointer().strip();
+        this.event = event;
+        this.traceResults = traceResults;
 
         Stalker.follow(this.threadId, {
             events: {
-                call: true,
+                block: true,
             },
             onReceive(events) {
-                const calls = parseCalls(events);
-
-                const numCalls = calls.length;
-
-                let currentNodes = nodes;
-                let nodeIndex = 0;
-
-                for (let callIndex = 0; callIndex !== numCalls; callIndex++) {
-                    const existing = currentNodes[nodeIndex];
-
-                    if (existing === undefined) {
-                        currentNodes.push(...calls.slice(callIndex));
-                        return;
-                    }
-
-                    const call = calls[callIndex];
-                    const id = call.id;
-
-                    if (existing instanceof Array) {
-                        let found = false;
-                        for (const e of existing) {
-                            const first = e[0];
-                            if (first.id === id) {
-                                found = true;
-
-                                currentNodes = e;
-                                nodeIndex = 0;
-
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            const newBranch = [ call ];
-                            existing.push(newBranch);
-
-                            currentNodes = newBranch;
-                            nodeIndex = 0;
-                        }
-                    } else if (call.id !== existing.id) {
-                        currentNodes[nodeIndex] = [ [ existing ], calls.slice(callIndex) ];
-                        return;
-                    }
-
-                    nodeIndex++;
-                }
+                traceResults.push(Buffer.from(events));
             }
         })
     },
     onLeave() {
-        if (!tracingEnabled) {
-            return;
-        }
-
         Stalker.flush();
         Stalker.unfollow(this.threadId);
+        setTimeout(() => { Stalker.garbageCollect(); }, 100);
 
-        const trace = this.trace as ExecutionTrace;
-        console.log(`\n=== Trace for ${trace.id}:`);
-        for (const node of trace.nodes.slice(0, 50)) {
-            console.log(`\t${JSON.stringify(node, null, 2)}`);
-        }
+        const { connection, handler, event, traceResults } = this;
+        send({
+            type: "trace",
+            handler,
+            event,
+            pid: xpcConnectionGetPid(connection)
+        }, Buffer.concat(traceResults).buffer as ArrayBuffer);
     }
 });
-
-function parseCalls(events: ArrayBuffer): CallEntry[] {
-    return Stalker.parse(events, { annotate: false }).map(([rawLocation, rawTarget, rawDepth]) => {
-        const location = DebugSymbol.fromAddress(rawLocation as NativePointer).toString();
-        const target = DebugSymbol.fromAddress(rawTarget as NativePointer).toString();
-        const depth = rawDepth as number;
-
-        const id = [location.toString(), target.toString()].join("->");
-        return {
-            id,
-            location,
-            target,
-            depth,
-        };
-    });
-}
 
 [
     "xpc_connection_send_message",
@@ -245,16 +179,16 @@ function parseCalls(events: ArrayBuffer): CallEntry[] {
     Interceptor.attach(Module.getExportByName(LIBXPC, name), function (args) {
         const connection = args[0];
         const message = parseXpcObject(args[1]);
-        logConnectionEvent(connection, ">>>", message, this);
+        logConnectionEvent(connection, "send", message, this);
     });
 });
 
-function logConnectionEvent(connection: NativePointer, prefix: string, event: XpcValue, ic: InvocationContext) {
-    const indent = [];
-    for (let i = ic.depth; i !== 0; i--) {
-        indent.push("\t");
-    }
-    console.log(`${indent}${prefix} [${connection} PID=${xpcConnectionGetPid(connection)}] ${JSON.stringify(event)}`);
+function logConnectionEvent(connection: NativePointer, type: "create" | "recv" | "send", event: XpcValue, ic: InvocationContext) {
+    send({
+        type,
+        event,
+        pid: xpcConnectionGetPid(connection),
+    });
 }
 
 function parseXpcObject(obj: NativePointer): XpcValue {

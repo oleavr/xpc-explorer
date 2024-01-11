@@ -8,6 +8,7 @@ import {
 } from "./config.js";
 import { Operation, AsyncOperation } from "./operation.js";
 
+import { QListWidget, QListWidgetItem, QMainWindow } from "@nodegui/nodegui";
 import { EventEmitter } from "events";
 import * as frida from "frida";
 import {
@@ -38,11 +39,20 @@ export class Application {
 
     #scheduler: OperationScheduler;
 
+    #window = new QMainWindow();
+    #handlerView = new QListWidget();
+    #handlers = new Set<string>();
+
     constructor(config: Config, delegate: Delegate) {
         this.#config = config;
         this.#delegate = delegate;
 
         this.#scheduler = new OperationScheduler("application", delegate);
+
+        this.#window.setWindowTitle("xpc-explorer");
+        this.#window.setCentralWidget(this.#handlerView);
+
+        this.#window.show();
     }
 
     public async dispose(): Promise<void> {
@@ -64,7 +74,7 @@ export class Application {
 
                 let controller = controllerByDeviceId.get(deviceId);
                 if (controller === undefined) {
-                    controller = new DeviceController(device, this.#delegate, this.#scheduler, this.#cancellable);
+                    controller = new DeviceController(device, this.#delegate, this, this.#scheduler, this.#cancellable);
                     controllerByDeviceId.set(deviceId, controller);
                     this.#controllers.push(controller);
                 }
@@ -105,10 +115,30 @@ export class Application {
             return device;
         });
     }
+
+    async onTrace({ handler }: TraceDetails, data: ArrayBuffer, agent: AgentApi) {
+        if (this.#handlers.has(handler)) {
+            return;
+        }
+        this.#handlers.add(handler);
+
+        const [ name ] = await agent.symbolicate([ handler ]);
+
+        const item = new QListWidgetItem();
+        item.setText(name);
+        this.#handlerView.addItem(item);
+    }
+}
+
+interface TraceDetails {
+    handler: string;
+    event: any;
+    pid: number;
 }
 
 class DeviceController {
     #delegate: Delegate;
+    #application: Application;
     #scheduler: OperationScheduler;
     #cancellable: Cancellable;
 
@@ -122,8 +152,10 @@ class DeviceController {
 
     #onSpawnGatingDisabled: (error: Error) => void = () => {};
 
-    constructor(public device: Device, delegate: Delegate, scheduler: OperationScheduler, cancellable: Cancellable) {
+    constructor(public device: Device, delegate: Delegate, application: Application, scheduler: OperationScheduler,
+            cancellable: Cancellable) {
         this.#delegate = delegate;
+        this.#application = application;
         this.#scheduler = scheduler;
         this.#cancellable = cancellable;
 
@@ -181,7 +213,7 @@ class DeviceController {
     async #instrument(pid: number, name: string): Promise<Agent> {
         const { device } = this;
 
-        const agent = await Agent.inject(device, pid, name, this.#delegate);
+        const agent = await Agent.inject(device, pid, name, this.#delegate, this.#application);
         this.#agents.set(pid, agent);
 
         this.#delegate.onConsoleMessage("application", LogLevel.Info, `Attached PID: ${name}:${pid}@${device.name}`);
@@ -424,6 +456,7 @@ class Agent {
     events: EventEmitter = new EventEmitter();
 
     #delegate: Delegate;
+    #application: Application;
 
     #session: Session | null = null;
     #script: Script | null = null;
@@ -433,14 +466,16 @@ class Agent {
             public device: string,
             public pid: number,
             public name: string,
-            delegate: Delegate) {
+            delegate: Delegate,
+            application: Application) {
         this.scheduler = new OperationScheduler(`${this.name}:${this.pid}@${this.device}`, delegate);
 
         this.#delegate = delegate;
+        this.#application = application;
     }
 
-    public static async inject(device: Device, pid: number, name: string, delegate: Delegate): Promise<Agent> {
-        const agent = new Agent(device.name, pid, name, delegate);
+    public static async inject(device: Device, pid: number, name: string, delegate: Delegate, application: Application): Promise<Agent> {
+        const agent = new Agent(device.name, pid, name, delegate, application);
         const { scheduler } = agent;
 
         try {
@@ -514,6 +549,10 @@ class Agent {
     #onMessage = (message: Message, data: Buffer | null): void => {
         switch (message.type) {
             case MessageType.Send:
+                if (message.payload.type === "trace") {
+                    this.#application.onTrace(message.payload, data!, this.#api!);
+                    return;
+                }
                 console.error(`[PID=${this.pid}]:`, message.payload);
                 break;
             case MessageType.Error:
