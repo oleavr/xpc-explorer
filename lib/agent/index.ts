@@ -1,4 +1,4 @@
-import { AgentApi } from "./interfaces.js";
+import { AgentApi, BasicBlockDescriptor } from "./interfaces.js";
 
 import { Buffer } from "buffer";
 
@@ -85,6 +85,10 @@ class Agent implements AgentApi {
 
     async symbolicate(addresses: string[]): Promise<string[]> {
         return addresses.map(addr => DebugSymbol.fromAddress(ptr(addr)).toString());
+    }
+
+    async disassemble(blocks: BasicBlockDescriptor[]): Promise<string[]> {
+        return blocks.map(({ start, end }) => disassembleBlock(ptr(start), ptr(end)));
     }
 }
 
@@ -332,6 +336,59 @@ function hexify(data: ArrayBuffer): string {
         .split("\n")
         .map(line => line.substring(10, 57).trimEnd())
         .join(" ");
+}
+
+function disassembleBlock(start: NativePointer, end: NativePointer): string {
+    const lines: string[] = [];
+
+    let cursor = start;
+    while (cursor.compare(end) < 0) {
+        try {
+            const insn = Instruction.parse(cursor) as Arm64Instruction | X86Instruction;
+            let comments: string[] = [];
+
+            for (const op of insn.operands) {
+                if (op.type === "imm") {
+                    const target = ptr(op.value.toString());
+                    const sym = DebugSymbol.fromAddress(target).name;
+
+                    if (sym !== null) {
+                        comments.push(sym);
+                    }
+                }
+            }
+
+            lines.push(padComments(`${cursor}    ${insn.toString()}`, comments));
+
+            cursor = cursor.add(insn.size);
+        } catch (e) {
+            if (Process.arch !== "arm64") {
+                break;
+            }
+            lines.push(`${cursor}    invalid`);
+            cursor = cursor.add(4);
+        }
+    }
+
+    return lines.join("\n");
+
+    function padComments(disassembly: string, comments: string[], pad = 30): string {
+        if (comments.length === 0) {
+            return disassembly;
+        }
+
+        const result = [disassembly];
+
+        if (disassembly.length < pad) {
+            for (let i = 0; i !== pad - disassembly.length; i++) {
+                result.push(" ");
+            }
+        }
+
+        result.push(` ; ${comments.join("; ")}`);
+
+        return result.join("");
+    }
 }
 
 const agent = new Agent();

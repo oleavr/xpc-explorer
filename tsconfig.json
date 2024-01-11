@@ -10,7 +10,8 @@
     "strict": true,
     "sourceMap": true,
     "forceConsistentCasingInFileNames": true,
-    "removeComments": true
+    "removeComments": true,
+    "skipLibCheck": true
   },
   "include": [
     "bin/**/*",
