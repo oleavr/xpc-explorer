@@ -1,6 +1,5 @@
 import { ItemDataRole, QTreeWidget, QTreeWidgetItem, QVariant } from "@nodegui/nodegui";
 import { BasicBlockDescriptor } from "./agent/interfaces";
-import { QVariantType } from "@nodegui/nodegui/dist/lib/QtCore/QVariant";
 
 const leakedJunk: any[] = [];
 
@@ -33,31 +32,27 @@ export class TreeModel {
 
         if (collapsed) {
             const collapsedRoot = this.#collapse();
-            for (let rootNode of collapsedRoot.children) {
-                const rootItem = this.#makeCollapsedItem(rootNode, widget);
-                this.#recurseRenderCollapsed(rootItem, rootNode);
-            }
+            this.#recurseRenderCollapsed(widget, collapsedRoot);
         } else {
-            for (let rootNode of this.#root.children) {
-                const rootItem = this.#makeItem(rootNode, widget);
-                this.#recurseRender(rootItem, rootNode);
-            }
+            this.#recurseRender(widget, this.#root);
         }
     }
 
-    #makeItem({ bb }: Node, parent: QTreeWidget | QTreeWidgetItem) {
-        const item = new QTreeWidgetItem(parent as QTreeWidget);
-        leakedJunk.push(item);
-        item.setText(0, `${bb.start} - ${bb.end}`);
-        const data = {
-            id: this.id,
-            bbs: [ bb ]
-        };
-        item.setData(0, ItemDataRole.UserRole, JSON.stringify(data));
-        return item;
+    #recurseRender(container: QTreeWidget | QTreeWidgetItem, node: Node) {
+        const parent = this.#makeCollapsedItem([ node.bb ], container);
+        for (const child of node.children) {
+            this.#recurseRender(parent, child);
+        }
     }
 
-    #makeCollapsedItem({ bbs }: CollapsedNode, parent: QTreeWidget | QTreeWidgetItem) {
+    #recurseRenderCollapsed(container: QTreeWidget | QTreeWidgetItem, node: CollapsedNode) {
+        const parent = this.#makeCollapsedItem(node.bbs, container);
+        for (const child of node.children) {
+            this.#recurseRenderCollapsed(parent, child);
+        }
+    }
+
+    #makeCollapsedItem(bbs: BasicBlockDescriptor[], parent: QTreeWidget | QTreeWidgetItem) {
         const item = new QTreeWidgetItem(parent as QTreeWidget);
         leakedJunk.push(item);
         item.setText(0, (bbs.length !== 0) ? `${bbs[0].start} ... ${bbs[bbs.length - 1].end}` : "(empty)");
@@ -67,20 +62,6 @@ export class TreeModel {
         };
         item.setData(0, ItemDataRole.UserRole, JSON.stringify(data));
         return item;
-    }
-
-    #recurseRender(rootItem: QTreeWidgetItem, rootNode: Node) {
-        for (const node of rootNode.children) {
-            const item = this.#makeItem(node, rootItem);
-            this.#recurseRender(item, node);
-        }
-    }
-
-    #recurseRenderCollapsed(rootItem: QTreeWidgetItem, rootNode: CollapsedNode) {
-        for (const node of rootNode.children) {
-            const item = this.#makeCollapsedItem(node, rootItem);
-            this.#recurseRenderCollapsed(item, node);
-        }
     }
 
     toString(collapsed: boolean): string {
@@ -166,12 +147,15 @@ export class TreeModel {
     }
 
     #collapseVisit(root: Node, collapsed: CollapsedNode) {
+        collapsed.bbs.push(root.bb);
+
         let cursor = root;
         while (cursor.children.length === 1) {
             const onlyChild = cursor.children[0];
             collapsed.bbs.push(onlyChild.bb);
             cursor = onlyChild;
         }
+
         if (cursor.children.length > 1) {
             for (const child of cursor.children) {
                 const collapsedChild = {

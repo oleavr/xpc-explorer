@@ -96,7 +96,7 @@ export class Application {
         eventLayout.addWidget(this.#eventDetailsView);
         eventGroup.setLayout(eventLayout);
         this.#eventView.setSelectionMode(2);
-        this.#eventView.addEventListener("currentRowChanged", this.#onEventViewCurrentRowChanged);
+        this.#eventView.addEventListener("itemSelectionChanged", this.#onEventViewItemSelectionChanged);
 
         const tracesGroup = new QGroupBox();
         tracesGroup.setTitle("Executed Traces on the Handler");
@@ -231,7 +231,7 @@ export class Application {
         this.#eventView.setCurrentRow(-1);
     };
 
-    #onEventViewCurrentRowChanged = async (currentRow: number) => {
+    #onEventViewItemSelectionChanged = async () => {
         this.#tracesView.clear();
 
         const handlerIndex = this.#handlerView.currentRow();
