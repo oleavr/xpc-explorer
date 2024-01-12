@@ -1,12 +1,13 @@
-import { QTreeWidget, QTreeWidgetItem } from "@nodegui/nodegui";
+import { ItemDataRole, QTreeWidget, QTreeWidgetItem, QVariant } from "@nodegui/nodegui";
 import { BasicBlockDescriptor } from "./agent/interfaces";
+import { QVariantType } from "@nodegui/nodegui/dist/lib/QtCore/QVariant";
 
 const leakedJunk: any[] = [];
 
 export class TreeModel {
     #root: Node | null = null;
 
-    constructor() {
+    constructor(public id: number) {
     }
 
     add(trace: Buffer) {
@@ -33,39 +34,52 @@ export class TreeModel {
         if (collapsed) {
             const collapsedRoot = this.#collapse();
             for (let rootNode of collapsedRoot.children) {
-                const rootItem = new QTreeWidgetItem(widget);
-                leakedJunk.push(rootItem);
-                rootItem.setText(0, `${rootNode.bbs[0].start} ... ${rootNode.bbs[rootNode.bbs.length - 1].end}`);
-                this.#recurseRender(rootItem, rootNode, (item, node) => {
-                    if (node.bbs.length === 0) {
-                        item.setText(0, "BUG");
-                        console.log("BUG");
-                        return;
-                    }
-                    console.log(`+ ${node.bbs[0].start} ... ${node.bbs[node.bbs.length - 1].end}`);
-                    item.setText(0, `${node.bbs[0].start} ... ${node.bbs[node.bbs.length - 1].end}`);
-                });
+                const rootItem = this.#makeCollapsedItem(rootNode, widget);
+                this.#recurseRenderCollapsed(rootItem, rootNode);
             }
         } else {
             for (let rootNode of this.#root.children) {
-                const rootItem = new QTreeWidgetItem();
-                leakedJunk.push(rootItem);
-                rootItem.setText(0, `${rootNode.bb.start} - ${rootNode.bb.end}`);
-                widget.addTopLevelItem(rootItem);
-
-                this.#recurseRender(rootItem, rootNode, (item, node) => {
-                    item.setText(0, `${node.bb.start} - ${node.bb.end}`);
-                });
+                const rootItem = this.#makeItem(rootNode, widget);
+                this.#recurseRender(rootItem, rootNode);
             }
         }
     }
 
-    #recurseRender<T extends Visitable<T>>(rootItem: QTreeWidgetItem, rootNode: T, callback: (item: QTreeWidgetItem, node: T) => void) {
+    #makeItem({ bb }: Node, parent: QTreeWidget | QTreeWidgetItem) {
+        const item = new QTreeWidgetItem(parent as QTreeWidget);
+        leakedJunk.push(item);
+        item.setText(0, `${bb.start} - ${bb.end}`);
+        const data = {
+            id: this.id,
+            bbs: [ bb ]
+        };
+        item.setData(0, ItemDataRole.UserRole, JSON.stringify(data));
+        return item;
+    }
+
+    #makeCollapsedItem({ bbs }: CollapsedNode, parent: QTreeWidget | QTreeWidgetItem) {
+        const item = new QTreeWidgetItem(parent as QTreeWidget);
+        leakedJunk.push(item);
+        item.setText(0, (bbs.length !== 0) ? `${bbs[0].start} ... ${bbs[bbs.length - 1].end}` : "(empty)");
+        const data = {
+            id: this.id,
+            bbs
+        };
+        item.setData(0, ItemDataRole.UserRole, JSON.stringify(data));
+        return item;
+    }
+
+    #recurseRender(rootItem: QTreeWidgetItem, rootNode: Node) {
         for (const node of rootNode.children) {
-            const item = new QTreeWidgetItem(rootItem);
-            leakedJunk.push(item);
-            callback(item, node);
-            this.#recurseRender(item, node, callback);
+            const item = this.#makeItem(node, rootItem);
+            this.#recurseRender(item, node);
+        }
+    }
+
+    #recurseRenderCollapsed(rootItem: QTreeWidgetItem, rootNode: CollapsedNode) {
+        for (const node of rootNode.children) {
+            const item = this.#makeCollapsedItem(node, rootItem);
+            this.#recurseRenderCollapsed(item, node);
         }
     }
 
@@ -169,6 +183,11 @@ export class TreeModel {
             }
         }
     }
+}
+
+export interface TreeItemData {
+    id: number;
+    bbs: BasicBlockDescriptor[];
 }
 
 function parseTrace(trace: Buffer): BasicBlockDescriptor[] {

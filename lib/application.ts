@@ -1,4 +1,4 @@
-import { AgentApi } from "./agent/interfaces.js";
+import { AgentApi, BasicBlockDescriptor } from "./agent/interfaces.js";
 import {
     Config,
     TargetDevice,
@@ -9,6 +9,7 @@ import {
 import { Operation, AsyncOperation } from "./operation.js";
 
 import {
+    ItemDataRole,
     QBoxLayout,
     QGroupBox,
     QListWidget,
@@ -17,7 +18,7 @@ import {
     QSplitter,
     QTextEdit,
     QTreeWidget,
-    QTreeWidgetItem
+    QTreeWidgetItem,
 } from "@nodegui/nodegui";
 import { EventEmitter } from "events";
 import * as frida from "frida";
@@ -37,7 +38,7 @@ import {
 } from "frida";
 import * as fs from "fs";
 import { promisify } from "util";
-import { TreeModel } from "./treemodel.js";
+import { TreeModel, TreeItemData } from "./treemodel.js";
 
 const readFile = promisify(fs.readFile);
 
@@ -76,52 +77,43 @@ export class Application {
         rootGroup.setObjectName("rootGroup");
         rootGroup.setLayout(rootLayout);
 
-        const dataSplitter = new QSplitter();
-        dataSplitter.setObjectName("dataSplitter");
-
-        const disassGroup = new QGroupBox();
-        const disassLayout = new QBoxLayout(0);
-        dataSplitter.setObjectName("disass-group");
-        disassGroup.setTitle("Disassembly");
-        disassLayout.addWidget(this.#disassView);
-        disassGroup.setLayout(disassLayout);
-        this.#disassView.setFontFamily("Courier");
-        this.#disassView.setReadOnly(true);
-        this.#tracesView.addEventListener("currentItemChanged", this.#onTracesViewCurrentRowChanged);
-
-        rootLayout.addWidget(dataSplitter);
-        rootLayout.addWidget(disassGroup);
+        const topSplitter = new QSplitter();
+        rootLayout.addWidget(topSplitter);
 
         const handlerGroup = new QGroupBox();
-        handlerGroup.setObjectName("handler-group");
         handlerGroup.setTitle("Handlers");
-        dataSplitter.addWidget(handlerGroup);
-
+        topSplitter.addWidget(handlerGroup);
         const handlerLayout = new QBoxLayout(2);
         handlerLayout.addWidget(this.#handlerView);
         handlerGroup.setLayout(handlerLayout);
-
         this.#handlerView.addEventListener("currentRowChanged", this.#onHandlerViewCurrentRowChanged);
 
         const eventGroup = new QGroupBox();
         eventGroup.setTitle("Events");
-        dataSplitter.addWidget(eventGroup);
-
+        topSplitter.addWidget(eventGroup);
         const eventLayout = new QBoxLayout(2);
         eventLayout.addWidget(this.#eventView);
         eventLayout.addWidget(this.#eventDetailsView);
         eventGroup.setLayout(eventLayout);
-
         this.#eventView.setSelectionMode(2);
         this.#eventView.addEventListener("currentRowChanged", this.#onEventViewCurrentRowChanged);
 
         const tracesGroup = new QGroupBox();
         tracesGroup.setTitle("Executed Traces on the Handler");
-        dataSplitter.addWidget(tracesGroup);
-
+        topSplitter.addWidget(tracesGroup);
+        this.#tracesView.addEventListener("currentItemChanged", this.#onTracesViewCurrentRowChanged);
         const dataLayout = new QBoxLayout(2);
         dataLayout.addWidget(this.#tracesView);
         tracesGroup.setLayout(dataLayout);
+
+        const disassGroup = new QGroupBox();
+        disassGroup.setTitle("Disassembly");
+        const disassLayout = new QBoxLayout(0);
+        disassLayout.addWidget(this.#disassView);
+        disassGroup.setLayout(disassLayout);
+        this.#disassView.setReadOnly(true);
+        this.#disassView.setFontFamily("Courier");
+        rootLayout.addWidget(disassGroup);
 
         this.#window.setWindowTitle("xpc-explorer");
         this.#window.setStyleSheet(rootStyleSheet);
@@ -242,9 +234,10 @@ export class Application {
     #onEventViewCurrentRowChanged = async (currentRow: number) => {
         this.#tracesView.clear();
 
-        const handler = this.#handlers[this.#handlerView.currentRow()];
+        const handlerIndex = this.#handlerView.currentRow();
+        const handler = this.#handlers[handlerIndex];
         const rowItems = this.#eventView.selectedItems().map((item) => this.#eventView.row(item));
-        const tree = new TreeModel();
+        const tree = new TreeModel(handlerIndex);
         for (let currentRow of rowItems) {
             const invocation = handler.invocations[currentRow];
             if (invocation === undefined) {
@@ -259,8 +252,23 @@ export class Application {
         //console.log(tree.toString(true));
     };
 
-    #onTracesViewCurrentRowChanged = async (currentItem: QTreeWidgetItem) => {
-        //this.#disassView.setText("TEST: " + currentItem.text(1));
+    #onTracesViewCurrentRowChanged = async (currentItem: QTreeWidgetItem | null) => {
+        if (currentItem === null) {
+            this.#disassView.clear();
+            return;
+        }
+
+        const data: TreeItemData = JSON.parse(currentItem.data(0, ItemDataRole.UserRole).toString());
+        const handler = this.#handlers[data.id];
+
+        const lines = [];
+        for (const disassembly of await handler.agent.disassemble(data.bbs.slice(-10))) {
+            if (lines.length !== 0) {
+                lines.push("\n------------------------");
+            }
+            lines.push(disassembly);
+        }
+        this.#disassView.setText(lines.join("\n"));
     }
 
     #addInvocationToUI(invocation: XpcHandlerInvocation) {
@@ -268,7 +276,6 @@ export class Application {
         item.setText(JSON.stringify(invocation.event));
         this.#eventView.addItem(item);
     }
-
 }
 
 interface XpcHandler {
