@@ -11,10 +11,13 @@ export class TreeModel {
         const blocks = parseTrace(trace);
         let cursor = this.#root;
         for (const bb of blocks) {
+            if (bb === undefined) {
+                console.log("PARSE ERROR");
+            }
             let parent = cursor;
             cursor = this.#childMatching(cursor, bb);
             if (cursor === null) {
-                cursor = this.#addChild(parent, { bb: bb, children: [] });
+                cursor = this.#addChild(parent, { bb, children: [] });
             }
         }
     }
@@ -24,26 +27,41 @@ export class TreeModel {
             return;
         }
         widget.clear();
+
         if (collapsed) {
             const collapsedRoot = this.#collapse();
             for (let rootNode of collapsedRoot.children) {
                 const rootItem = new QTreeWidgetItem();
                 rootItem.setText(0, `${rootNode.bbs[0].start} ... ${rootNode.bbs[rootNode.bbs.length - 1].end}`);
                 widget.addTopLevelItem(rootItem);
-                widget.topLevelItems
+                this.#recurseRender(rootItem, rootNode, (item, node) => {
+                    if (node.bbs.length === 0) {
+                        item.setText(0, "BUG");
+                        console.log("BUG");
+                        return;
+                    }
+                    console.log(`+ ${node.bbs[0].start} ... ${node.bbs[node.bbs.length - 1].end}`);
+                    item.setText(0, `${node.bbs[0].start} ... ${node.bbs[node.bbs.length - 1].end}`);
+                });
             }
-            // this.#visit(collapsedRoot, 0, (node, depth) => {
-            
-            // });
         } else {
             for (let rootNode of this.#root.children) {
                 const rootItem = new QTreeWidgetItem();
                 rootItem.setText(0, `${rootNode.bb.start} - ${rootNode.bb.end}`);
                 widget.addTopLevelItem(rootItem);
-            }
-            // this.#visit(this.#root, 0, (node, depth) => {
 
-            // });
+                this.#recurseRender(rootItem, rootNode, (item, node) => {
+                    item.setText(0, `${node.bb.start} - ${node.bb.end}`);
+                });
+            }
+        }
+    }
+
+    #recurseRender<T extends Visitable<T>>(rootItem: QTreeWidgetItem, rootNode: T, callback: (item: QTreeWidgetItem, node: T) => void) {
+        for (const node of rootNode.children) {
+            const item = new QTreeWidgetItem(rootItem);
+            callback(item, node);
+            this.#recurseRender(item, node, callback);
         }
     }
 
@@ -58,19 +76,15 @@ export class TreeModel {
             const collapsedRoot = this.#collapse();
 
             this.#visit(collapsedRoot, 0, (node, depth) => {
-                if (node) {
-    
+                if (node.bbs.length === 0) {
+                    lines.push(`${spaces(depth)}+ BUG`);
+                    return;
                 }
                 lines.push(`${spaces(depth)}+ ${node.bbs[0].start} ... ${node.bbs[node.bbs.length - 1].end}`);
-                return true;
             });
         } else {
             this.#visit(this.#root, 0, (node, depth) => {
-                if (node) {
-    
-                }
                 lines.push(`${spaces(depth)}+ ${node.bb.start} - ${node.bb.end}`);
-                return true;
             });    
         }
 

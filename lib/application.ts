@@ -256,10 +256,11 @@ export class Application {
             tree.add(trace);
         }
         tree.render(this.#tracesView, true);
+        //console.log(tree.toString(true));
     };
 
     #onTracesViewCurrentRowChanged = async (currentItem: QTreeWidgetItem) => {
-        this.#disassView.setText("TEST: " + currentItem.text(1));
+        //this.#disassView.setText("TEST: " + currentItem.text(1));
     }
 
     #addInvocationToUI(invocation: XpcHandlerInvocation) {
