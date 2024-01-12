@@ -15,7 +15,9 @@ import {
     QListWidgetItem,
     QMainWindow,
     QSplitter,
-    QTextEdit
+    QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem
 } from "@nodegui/nodegui";
 import { EventEmitter } from "events";
 import * as frida from "frida";
@@ -35,6 +37,7 @@ import {
 } from "frida";
 import * as fs from "fs";
 import { promisify } from "util";
+import { TreeModel } from "./treemodel.js";
 
 const readFile = promisify(fs.readFile);
 
@@ -57,7 +60,8 @@ export class Application {
     #handlerView = new QListWidget();
     #eventView = new QListWidget();
     #eventDetailsView = new QTextEdit();
-    #dataView = new QTextEdit();
+    #tracesView = new QTreeWidget();
+    #disassView = new QTextEdit();
 
     #handlers: XpcHandler[] = [];
 
@@ -76,8 +80,14 @@ export class Application {
         dataSplitter.setObjectName("dataSplitter");
 
         const disassGroup = new QGroupBox();
+        const disassLayout = new QBoxLayout(0);
         dataSplitter.setObjectName("disass-group");
         disassGroup.setTitle("Disassembly");
+        disassLayout.addWidget(this.#disassView);
+        disassGroup.setLayout(disassLayout);
+        this.#disassView.setFontFamily("Courier");
+        this.#disassView.setReadOnly(true);
+        this.#tracesView.addEventListener("currentItemChanged", this.#onTracesViewCurrentRowChanged);
 
         rootLayout.addWidget(dataSplitter);
         rootLayout.addWidget(disassGroup);
@@ -102,18 +112,16 @@ export class Application {
         eventLayout.addWidget(this.#eventDetailsView);
         eventGroup.setLayout(eventLayout);
 
-        //this.#eventView.setSelectionMode(2);
+        this.#eventView.setSelectionMode(2);
         this.#eventView.addEventListener("currentRowChanged", this.#onEventViewCurrentRowChanged);
 
-        const execGroup = new QGroupBox();
-        execGroup.setTitle("Execution Tree");
-        dataSplitter.addWidget(execGroup);
+        const tracesGroup = new QGroupBox();
+        tracesGroup.setTitle("Executed Traces on the Handler");
+        dataSplitter.addWidget(tracesGroup);
 
         const dataLayout = new QBoxLayout(2);
-        dataLayout.addWidget(this.#dataView);
-        execGroup.setLayout(dataLayout);
-
-        this.#dataView.setReadOnly(true);
+        dataLayout.addWidget(this.#tracesView);
+        tracesGroup.setLayout(dataLayout);
 
         this.#window.setWindowTitle("xpc-explorer");
         this.#window.setStyleSheet(rootStyleSheet);
@@ -232,51 +240,34 @@ export class Application {
     };
 
     #onEventViewCurrentRowChanged = async (currentRow: number) => {
-        this.#dataView.clear();
+        this.#tracesView.clear();
 
         const handler = this.#handlers[this.#handlerView.currentRow()];
-        const invocation = handler.invocations[currentRow];
-        if (invocation === undefined) {
-            return;
+        const rowItems = this.#eventView.selectedItems().map((item) => this.#eventView.row(item));
+        const tree = new TreeModel();
+        for (let currentRow of rowItems) {
+            const invocation = handler.invocations[currentRow];
+            if (invocation === undefined) {
+                return;
+            }
+
+            const { trace, event } = invocation;
+            this.#eventDetailsView.setText(JSON.stringify(event, null, 2));
+            tree.add(trace);
         }
-
-        const lines: string[] = [];
-        const eventSize = 32;
-        const { trace, event } = invocation;
-        const size = trace.length;
-        const { agent } = handler;
-        const started = Date.now();
-        for (let offset = 0; offset < size; offset += eventSize) {
-            const type = trace.readUInt32LE(offset);
-            if (type !== 8) {
-                continue;
-            }
-
-            if (lines.length !== 0) {
-                lines.push(`-----------------------`);
-            }
-
-            const start = `0x${trace.readBigUInt64LE(offset + 8).toString(16)}`;
-            const end = `0x${trace.readBigUInt64LE(offset + 16).toString(16)}`;
-
-            const disassembled = await agent.disassemble([{ start, end }]);
-            lines.push(...disassembled);
-
-            if (Date.now() - started >= 50) {
-                const numEventsOmitted = ((size - offset) / eventSize) + 1;
-                lines.push(`\n(...and ${numEventsOmitted} more events...)`);
-                break;
-            }
-        }
-        this.#dataView.setText(lines.join("\n"));
-        this.#eventDetailsView.setText(JSON.stringify(event, null, 2));
+        tree.render(this.#tracesView, true);
     };
+
+    #onTracesViewCurrentRowChanged = async (currentItem: QTreeWidgetItem) => {
+        this.#disassView.setText("TEST: " + currentItem.text(1));
+    }
 
     #addInvocationToUI(invocation: XpcHandlerInvocation) {
         const item = new QListWidgetItem();
         item.setText(JSON.stringify(invocation.event));
         this.#eventView.addItem(item);
     }
+
 }
 
 interface XpcHandler {

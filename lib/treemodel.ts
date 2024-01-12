@@ -1,4 +1,4 @@
-import { QTreeWidget } from "@nodegui/nodegui";
+import { QTreeWidget, QTreeWidgetItem } from "@nodegui/nodegui";
 import { BasicBlockDescriptor } from "./agent/interfaces";
 
 export class TreeModel {
@@ -19,8 +19,32 @@ export class TreeModel {
         }
     }
 
-    render(widget: QTreeWidget, collapse: boolean) {
+    render(widget: QTreeWidget, collapsed: boolean) {
+        if (this.#root === null) {
+            return;
+        }
         widget.clear();
+        if (collapsed) {
+            const collapsedRoot = this.#collapse();
+            for (let rootNode of collapsedRoot.children) {
+                const rootItem = new QTreeWidgetItem();
+                rootItem.setText(0, `${rootNode.bbs[0].start} ... ${rootNode.bbs[rootNode.bbs.length - 1].end}`);
+                widget.addTopLevelItem(rootItem);
+                widget.topLevelItems
+            }
+            // this.#visit(collapsedRoot, 0, (node, depth) => {
+            
+            // });
+        } else {
+            for (let rootNode of this.#root.children) {
+                const rootItem = new QTreeWidgetItem();
+                rootItem.setText(0, `${rootNode.bb.start} - ${rootNode.bb.end}`);
+                widget.addTopLevelItem(rootItem);
+            }
+            // this.#visit(this.#root, 0, (node, depth) => {
+
+            // });
+        }
     }
 
     toString(collapsed: boolean): string {
