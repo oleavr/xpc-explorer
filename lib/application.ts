@@ -236,18 +236,22 @@ export class Application {
 
         const handlerIndex = this.#handlerView.currentRow();
         const handler = this.#handlers[handlerIndex];
-        const rowItems = this.#eventView.selectedItems().map((item) => this.#eventView.row(item));
-        const tree = new TreeModel(handlerIndex);
-        for (let currentRow of rowItems) {
+        const rowItems = this.#eventView.selectedItems().map(item => this.#eventView.row(item));
+        const tree = new TreeModel(handlerIndex, handler.agent);
+        const detailSections = [];
+        for (const currentRow of rowItems) {
             const invocation = handler.invocations[currentRow];
             if (invocation === undefined) {
                 return;
             }
 
             const { trace, event } = invocation;
-            this.#eventDetailsView.setText(JSON.stringify(event, null, 2));
+            detailSections.push(JSON.stringify(event, null, 2));
             tree.add(trace);
         }
+
+        this.#eventDetailsView.setText(detailSections.join("\n---\n"));
+
         tree.render(this.#tracesView, true);
         //console.log(tree.toString(true));
     };
@@ -262,9 +266,9 @@ export class Application {
         const handler = this.#handlers[data.id];
 
         const lines = [];
-        for (const disassembly of await handler.agent.disassemble(data.bbs.slice(0, 10))) {
+        for (const disassembly of await handler.agent.disassemble(data.bbs.slice(0, 100))) {
             if (lines.length !== 0) {
-                lines.push("\n------------------------");
+                lines.push("\n");
             }
             lines.push(disassembly);
         }

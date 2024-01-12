@@ -341,6 +341,11 @@ function hexify(data: ArrayBuffer): string {
 function disassembleBlock(start: NativePointer, end: NativePointer): string {
     const lines: string[] = [];
 
+    const sym = DebugSymbol.fromAddress(start);
+    if (sym.moduleName !== null) {
+        lines.push(`; ${sym.moduleName}!${sym.name}`);
+    }
+
     const isArm64 = Process.arch === "arm64";
 
     let cursor = start;

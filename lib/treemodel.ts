@@ -1,12 +1,17 @@
 import { ItemDataRole, QTreeWidget, QTreeWidgetItem, QVariant } from "@nodegui/nodegui";
-import { BasicBlockDescriptor } from "./agent/interfaces";
+import { AgentApi, BasicBlockDescriptor } from "./agent/interfaces";
 
 const leakedJunk: any[] = [];
 
 export class TreeModel {
+    #id: number;
     #root: Node | null = null;
 
-    constructor(public id: number) {
+    #agent: AgentApi;
+
+    constructor(id: number, agent: AgentApi) {
+        this.#id = id;
+        this.#agent = agent;
     }
 
     add(trace: Buffer) {
@@ -39,29 +44,45 @@ export class TreeModel {
     }
 
     #recurseRender(container: QTreeWidget | QTreeWidgetItem, node: Node) {
-        const parent = this.#makeCollapsedItem([ node.bb ], container);
+        const parent = this.#makeItem([ node.bb ], container);
         for (const child of node.children) {
             this.#recurseRender(parent, child);
         }
     }
 
     #recurseRenderCollapsed(container: QTreeWidget | QTreeWidgetItem, node: CollapsedNode) {
-        const parent = this.#makeCollapsedItem(node.bbs, container);
+        const parent = this.#makeItem(node.bbs, container);
         for (const child of node.children) {
             this.#recurseRenderCollapsed(parent, child);
         }
     }
 
-    #makeCollapsedItem(bbs: BasicBlockDescriptor[], parent: QTreeWidget | QTreeWidgetItem) {
+    #makeItem(bbs: BasicBlockDescriptor[], parent: QTreeWidget | QTreeWidgetItem) {
         const item = new QTreeWidgetItem(parent as QTreeWidget);
         leakedJunk.push(item);
-        item.setText(0, (bbs.length !== 0) ? `${bbs[0].start} ... ${bbs[bbs.length - 1].end}` : "(empty)");
+
+        const startAddress = bbs[0].start;
+        const endAddress = bbs[bbs.length - 1].end;
+        item.setText(0, `${startAddress} ... ${endAddress}`);
+
+        this.#decorateItem(item, startAddress, endAddress);
+
         const data = {
-            id: this.id,
+            id: this.#id,
             bbs
         };
         item.setData(0, ItemDataRole.UserRole, JSON.stringify(data));
+
         return item;
+    }
+
+    async #decorateItem(item: QTreeWidgetItem, startAddress: string, endAddress: string) {
+        try {
+            const [ startName, endName ] = await this.#agent.symbolicate([ startAddress, endAddress ]);
+            item.setText(0, `${startName} ... ${endName}`);
+        } catch (e) {
+            console.error(e);
+        }
     }
 
     toString(collapsed: boolean): string {
