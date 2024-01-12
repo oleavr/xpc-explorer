@@ -1,6 +1,8 @@
 import { QTreeWidget, QTreeWidgetItem } from "@nodegui/nodegui";
 import { BasicBlockDescriptor } from "./agent/interfaces";
 
+const leakedJunk: any[] = [];
+
 export class TreeModel {
     #root: Node | null = null;
 
@@ -31,9 +33,9 @@ export class TreeModel {
         if (collapsed) {
             const collapsedRoot = this.#collapse();
             for (let rootNode of collapsedRoot.children) {
-                const rootItem = new QTreeWidgetItem();
+                const rootItem = new QTreeWidgetItem(widget);
+                leakedJunk.push(rootItem);
                 rootItem.setText(0, `${rootNode.bbs[0].start} ... ${rootNode.bbs[rootNode.bbs.length - 1].end}`);
-                widget.addTopLevelItem(rootItem);
                 this.#recurseRender(rootItem, rootNode, (item, node) => {
                     if (node.bbs.length === 0) {
                         item.setText(0, "BUG");
@@ -47,6 +49,7 @@ export class TreeModel {
         } else {
             for (let rootNode of this.#root.children) {
                 const rootItem = new QTreeWidgetItem();
+                leakedJunk.push(rootItem);
                 rootItem.setText(0, `${rootNode.bb.start} - ${rootNode.bb.end}`);
                 widget.addTopLevelItem(rootItem);
 
@@ -60,6 +63,7 @@ export class TreeModel {
     #recurseRender<T extends Visitable<T>>(rootItem: QTreeWidgetItem, rootNode: T, callback: (item: QTreeWidgetItem, node: T) => void) {
         for (const node of rootNode.children) {
             const item = new QTreeWidgetItem(rootItem);
+            leakedJunk.push(item);
             callback(item, node);
             this.#recurseRender(item, node, callback);
         }
