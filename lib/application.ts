@@ -262,7 +262,7 @@ export class Application {
         const handler = this.#handlers[data.id];
 
         const lines = [];
-        for (const disassembly of await handler.agent.disassemble(data.bbs.slice(-10))) {
+        for (const disassembly of await handler.agent.disassemble(data.bbs.slice(0, 10))) {
             if (lines.length !== 0) {
                 lines.push("\n------------------------");
             }
