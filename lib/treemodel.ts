@@ -1,5 +1,6 @@
-import { ItemDataRole, QTreeWidget, QTreeWidgetItem, QVariant } from "@nodegui/nodegui";
-import { AgentApi, BasicBlockDescriptor } from "./agent/interfaces";
+import { ItemDataRole, QTreeWidget, QTreeWidgetItem } from "@nodegui/nodegui";
+import { AgentApi, BasicBlockDescriptor } from "./agent/interfaces.js";
+import { describeAddressInfo } from "./info.js";
 
 const leakedJunk: any[] = [];
 
@@ -14,8 +15,8 @@ export class TreeModel {
         this.#agent = agent;
     }
 
-    add(trace: Buffer) {
-        const blocks = parseTrace(trace);
+    async add(trace: Buffer) {
+        const blocks = await this.#trimCloakedBlocks(parseTrace(trace));
         let cursor = this.#root;
         for (const bb of blocks) {
             if (bb === undefined) {
@@ -61,28 +62,63 @@ export class TreeModel {
         const item = new QTreeWidgetItem(parent as QTreeWidget);
         leakedJunk.push(item);
 
-        const startAddress = bbs[0].start;
-        const endAddress = bbs[bbs.length - 1].end;
-        item.setText(0, `${startAddress} ... ${endAddress}`);
-
-        this.#decorateItem(item, startAddress, endAddress);
+        if (bbs.length !== 0) {
+            const startAddress = bbs[0].start;
+            const endAddress = bbs[bbs.length - 1].end;
+            item.setText(0, `${startAddress} ... ${endAddress}`);
+            this.#decorateItem(item, startAddress, endAddress);
+        } else {
+            item.setText(0, "Empty");
+        }
 
         const data = {
             id: this.#id,
             bbs
         };
         item.setData(0, ItemDataRole.UserRole, JSON.stringify(data));
+        item.setExpanded(true);
 
         return item;
     }
 
     async #decorateItem(item: QTreeWidgetItem, startAddress: string, endAddress: string) {
         try {
-            const [ startName, endName ] = await this.#agent.symbolicate([ startAddress, endAddress ]);
-            item.setText(0, `${startName} ... ${endName}`);
+            const [ startInfo, endInfo ] = await this.#agent.symbolicate([ startAddress, endAddress ]);
+            item.setText(0, `${describeAddressInfo(startInfo)} ... ${describeAddressInfo(endInfo)}`);
         } catch (e) {
             console.error(e);
         }
+    }
+
+    async #trimCloakedBlocks(bbs: BasicBlockDescriptor[]): Promise<BasicBlockDescriptor[]> {
+        const CHUNK_SIZE = 100;
+
+        if (bbs.length < CHUNK_SIZE) {
+            const limits = await this.#agent.trimCloakedBlocks(bbs);
+            return bbs.slice(limits.fromIndex, limits.toIndex + 1);
+        }
+
+        let fromIndex = bbs.length;
+        for (let i = 0; i < bbs.length; i += CHUNK_SIZE) {
+            const chunk = bbs.slice(i, i + CHUNK_SIZE);
+            const chunkLimits = await this.#agent.trimCloakedBlocks(chunk);
+            if (chunkLimits.fromIndex < chunk.length) {
+                fromIndex = chunkLimits.fromIndex + i;
+                break;
+            }
+        }
+
+        let toIndex = -1;
+        for (let i = bbs.length - CHUNK_SIZE; i >= 0; i -= Math.min(CHUNK_SIZE, i)) {
+            const chunk = bbs.slice(i, i + CHUNK_SIZE);
+            const chunkLimits = await this.#agent.trimCloakedBlocks(chunk);
+            if (chunkLimits.toIndex >= 0) {
+                toIndex = chunkLimits.toIndex + i;
+                break;
+            }
+        }
+
+        return bbs.slice(fromIndex, toIndex + 1);
     }
 
     toString(collapsed: boolean): string {

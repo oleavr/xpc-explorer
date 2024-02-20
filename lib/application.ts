@@ -1,4 +1,4 @@
-import { AgentApi, BasicBlockDescriptor } from "./agent/interfaces.js";
+import { AgentApi, BasicBlockDescriptor, TrimLimits } from "./agent/interfaces.js";
 import {
     Config,
     TargetDevice,
@@ -39,6 +39,7 @@ import {
 import * as fs from "fs";
 import { promisify } from "util";
 import { TreeModel, TreeItemData } from "./treemodel.js";
+import { describeAddressInfo } from "./info.js";
 
 const readFile = promisify(fs.readFile);
 
@@ -101,6 +102,7 @@ export class Application {
         const tracesGroup = new QGroupBox();
         tracesGroup.setTitle("Executed Traces on the Handler");
         topSplitter.addWidget(tracesGroup);
+        this.#tracesView.setHeaderHidden(true);
         this.#tracesView.addEventListener("currentItemChanged", this.#onTracesViewCurrentRowChanged);
         const dataLayout = new QBoxLayout(2);
         dataLayout.addWidget(this.#tracesView);
@@ -216,9 +218,10 @@ export class Application {
             item.setText(handlerId);
             this.#handlerView.addItem(item);
 
-            const [ name ] = await agent.symbolicate([ handlerId ]);
-            handler.name = name;
-            item.setText(name);
+            const [ info ] = await agent.symbolicate([ handlerId ]);
+            const infoDescription = describeAddressInfo(info);
+            handler.name = infoDescription;
+            item.setText(infoDescription);
         }
     }
 
@@ -247,12 +250,12 @@ export class Application {
 
             const { trace, event } = invocation;
             detailSections.push(JSON.stringify(event, null, 2));
-            tree.add(trace);
+            await tree.add(trace);
         }
 
         this.#eventDetailsView.setText(detailSections.join("\n---\n"));
 
-        tree.render(this.#tracesView, true);
+        await tree.render(this.#tracesView, true);
         //console.log(tree.toString(true));
     };
 
@@ -264,9 +267,8 @@ export class Application {
 
         const data: TreeItemData = JSON.parse(currentItem.data(0, ItemDataRole.UserRole).toString());
         const handler = this.#handlers[data.id];
-
         const lines = [];
-        for (const disassembly of await handler.agent.disassemble(data.bbs.slice(0, 100))) {
+        for (const disassembly of await handler.agent.disassemble(data.bbs.slice(0, 300))) {
             if (lines.length !== 0) {
                 lines.push("\n");
             }
@@ -280,6 +282,8 @@ export class Application {
         item.setText(JSON.stringify(invocation.event));
         this.#eventView.addItem(item);
     }
+
+    
 }
 
 interface XpcHandler {

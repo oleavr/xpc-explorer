@@ -1,4 +1,4 @@
-import { AgentApi, BasicBlockDescriptor } from "./interfaces.js";
+import { AddressInfo, AgentApi, BasicBlockDescriptor, TrimLimits } from "./interfaces.js";
 
 import { Buffer } from "buffer";
 
@@ -81,14 +81,41 @@ registerXpcParsers();
 
 class Agent implements AgentApi {
     async init(): Promise<void> {
+        const resolver = new ApiResolver("module");
+        resolver.enumerateMatches("exports:*!*xpc_connection_create*")
+            .forEach(({ name, address }) => {
+                Interceptor.attach(address, {
+                    onEnter(args) {
+                        this.details = parseXpcConnectionCreateArgs(name, args);
+                    },
+                    onLeave(retval) {
+                        logConnectionEvent(retval, "create", this.details, this);
+                    }
+                });
+            });
+        attachAll();
     }
 
-    async symbolicate(addresses: string[]): Promise<string[]> {
-        return addresses.map(addr => DebugSymbol.fromAddress(ptr(addr)).toString());
+    async symbolicate(addresses: string[]): Promise<AddressInfo[]> {
+        return addresses.map(ptr).map(computeAddressInfo);
     }
 
     async disassemble(blocks: BasicBlockDescriptor[]): Promise<string[]> {
         return blocks.map(({ start, end }) => disassembleBlock(ptr(start), ptr(end)));
+    }
+
+    async trimCloakedBlocks(blocks: BasicBlockDescriptor[]): Promise<TrimLimits> {
+        let fromIndex = 0;
+        while (fromIndex !== blocks.length && (Cloak.hasRangeContaining(ptr(blocks[fromIndex].start)))) {
+            fromIndex++;
+        }
+    
+        let toIndex = blocks.length - 1;
+        while (toIndex >= 0 && (Cloak.hasRangeContaining(ptr(blocks[toIndex].start)))) {
+            toIndex--;
+        }
+    
+        return { fromIndex, toIndex };
     }
 }
 
@@ -108,19 +135,6 @@ interface CallEntry {
     depth: number;
 }
 
-const resolver = new ApiResolver("module");
-resolver.enumerateMatches("exports:*!*xpc_connection_create*")
-    .forEach(({ name, address }) => {
-        Interceptor.attach(address, {
-            onEnter(args) {
-                this.details = parseXpcConnectionCreateArgs(name, args);
-            },
-            onLeave(retval) {
-                logConnectionEvent(retval, "create", this.details, this);
-            }
-        });
-    });
-
 function parseXpcConnectionCreateArgs(name: string, args: InvocationArguments) {
     if (name.endsWith("!xpc_connection_create")) {
         return {
@@ -137,55 +151,62 @@ function parseXpcConnectionCreateArgs(name: string, args: InvocationArguments) {
     return {};
 }
 
-Interceptor.attach(DebugSymbol.getFunctionByName("_xpc_connection_call_event_handler"), {
-    onEnter(args) {
-        const connection = args[0];
-        const event = parseXpcObject(args[1]);
-
-        logConnectionEvent(connection, "recv", event, this);
-
-        const traceResults: Buffer[] = [];
-
-        this.connection = connection;
-        this.handler = connection.strip().add(0x20).readPointer().strip().add(0x10).readPointer().strip();
-        this.event = event;
-        this.traceResults = traceResults;
-
-        Stalker.follow(this.threadId, {
-            events: {
-                block: true,
-            },
-            onReceive(events) {
-                traceResults.push(Buffer.from(events));
+function attachAll() {
+    Interceptor.attach(DebugSymbol.getFunctionByName("_xpc_connection_call_event_handler"), {
+        onEnter(args) {
+            const connection = args[0];
+            const event = parseXpcObject(args[1]);
+    
+            logConnectionEvent(connection, "recv", event, this);
+    
+            const traceResults: Buffer[] = [];
+    
+            this.connection = connection;
+            this.handler = connection.strip().add(0x20).readPointer().strip().add(0x10).readPointer().strip();
+            this.event = event;
+            this.traceResults = traceResults;
+    
+            Stalker.follow(this.threadId, {
+                events: {
+                    block: true,
+                },
+                onReceive(events) {
+                    traceResults.push(Buffer.from(events));
+                }
+            })
+        },
+        onLeave() {
+            try {
+                Stalker.flush();
+                Stalker.unfollow(this.threadId);
+                setTimeout(() => { Stalker.garbageCollect(); }, 100);
+        
+                const { connection, handler, event, traceResults } = this;
+                send({
+                    type: "trace",
+                    handler,
+                    event,
+                    pid: xpcConnectionGetPid(connection)
+                }, Buffer.concat(traceResults).buffer as ArrayBuffer);
+            } catch (e) {
+                const err = e as Error;
+                console.log("ERROR:", err.stack ?? err);
             }
-        })
-    },
-    onLeave() {
-        Stalker.flush();
-        Stalker.unfollow(this.threadId);
-        setTimeout(() => { Stalker.garbageCollect(); }, 100);
-
-        const { connection, handler, event, traceResults } = this;
-        send({
-            type: "trace",
-            handler,
-            event,
-            pid: xpcConnectionGetPid(connection)
-        }, Buffer.concat(traceResults).buffer as ArrayBuffer);
-    }
-});
-
-[
-    "xpc_connection_send_message",
-    "xpc_connection_send_message_with_reply",
-    "xpc_connection_send_message_with_reply_sync",
-].forEach(name => {
-    Interceptor.attach(Module.getExportByName(LIBXPC, name), function (args) {
-        const connection = args[0];
-        const message = parseXpcObject(args[1]);
-        logConnectionEvent(connection, "send", message, this);
+        }
     });
-});
+    
+    [
+        "xpc_connection_send_message",
+        "xpc_connection_send_message_with_reply",
+        "xpc_connection_send_message_with_reply_sync",
+    ].forEach(name => {
+        Interceptor.attach(Module.getExportByName(LIBXPC, name), function (args) {
+            const connection = args[0];
+            const message = parseXpcObject(args[1]);
+            logConnectionEvent(connection, "send", message, this);
+        });
+    });    
+}
 
 function logConnectionEvent(connection: NativePointer, type: "create" | "recv" | "send", event: XpcValue, ic: InvocationContext) {
     send({
@@ -338,9 +359,27 @@ function hexify(data: ArrayBuffer): string {
         .join(" ");
 }
 
+function computeAddressInfo(address: NativePointer): AddressInfo {
+    let moduleOffset: string;
+    const module = Process.findModuleByAddress(address);
+    if (module !== null) {
+        const offset = address.sub(module.base);
+        moduleOffset = `${module.name}!${offset}`;
+    } else {
+        moduleOffset = address.toString();
+    }
+
+    const sym = DebugSymbol.fromAddress(address);
+    return {
+        moduleOffset,
+        name: sym.name
+    };
+}
+
 function disassembleBlock(start: NativePointer, end: NativePointer): string {
     const lines: string[] = [];
 
+    const module = Process.findModuleByAddress(start);
     const sym = DebugSymbol.fromAddress(start);
     if (sym.moduleName !== null) {
         lines.push(`; ${sym.moduleName}!${sym.name}`);
@@ -370,6 +409,14 @@ function disassembleBlock(start: NativePointer, end: NativePointer): string {
                     if (sym !== null) {
                         comments.push(sym);
                     }
+
+                    try {
+                        const str = target.readUtf8String();
+                        if (str) {
+                            comments.push(`"${str}"`);
+                        }
+                    } catch(e) {
+                    }
                 }
             } else {
                 for (const op of insn.operands) {
@@ -384,7 +431,12 @@ function disassembleBlock(start: NativePointer, end: NativePointer): string {
                 }
             }
 
-            lines.push(padComments(`${cursor}    ${insn.toString()}`, comments));
+            let addressComponents = [cursor.toString()];
+            if (module !== null) {
+                addressComponents.push(`${module.name}!${cursor.sub(module.base)}`);
+            }
+
+            lines.push(padComments(`${addressComponents.join(" ")}    ${insn.toString()}`, comments));
 
             cursor = cursor.add(insn.size);
         } catch (e) {
